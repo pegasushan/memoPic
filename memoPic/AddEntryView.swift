@@ -117,7 +117,6 @@ struct AddEntryView: View {
                             alertMessage = "이미 동일한 메모가 존재합니다."
                             return
                         }
-                        let now = Date()
                         if let entry = editingEntry {
                             entry.memo = memoText
                             if let firstImage = selectedImages.first {
@@ -126,7 +125,7 @@ struct AddEntryView: View {
                         } else {
                             let newEntry = DiaryEntry(context: viewContext)
                             newEntry.id = UUID()
-                            newEntry.date = now
+                            newEntry.date = date
                             newEntry.memo = memoText
                             if let firstImage = selectedImages.first {
                                 newEntry.imageData = firstImage.jpegData(compressionQuality: 0.8)
@@ -150,10 +149,13 @@ struct AddEntryView: View {
                     }
                     .padding(.horizontal)
                     .padding(.bottom, 12)
-                    .alert(alertMessage, isPresented: .constant(!alertMessage.isEmpty)) {
-                        Button("확인", role: .cancel) {
-                            alertMessage = ""
-                        }
+                    .alert("알림", isPresented: Binding(
+                        get: { !alertMessage.isEmpty },
+                        set: { if !$0 { alertMessage = "" } }
+                    )) {
+                        Button("확인", role: .cancel) { alertMessage = "" }
+                    } message: {
+                        Text(alertMessage)
                     }
                     .alert(isPresented: $showSaveSuccessAlert) {
                         Alert(title: Text(editingEntry == nil ? "저장됨" : "수정됨"))

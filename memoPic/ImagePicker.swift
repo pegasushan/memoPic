@@ -29,7 +29,10 @@ struct ImagePicker: UIViewControllerRepresentable {
 
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
-            if let uiImage = info[.originalImage] as? UIImage {
+            // Prefer edited image when available; fall back to original
+            let preferredKey: UIImagePickerController.InfoKey = picker.allowsEditing ? .editedImage : .originalImage
+            let chosenImage = (info[preferredKey] as? UIImage) ?? (info[.originalImage] as? UIImage)
+            if let uiImage = chosenImage {
                 parent.imageHandler(uiImage)
             }
             parent.isPresented = false

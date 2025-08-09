@@ -17,6 +17,8 @@ struct ContentView: View {
     @State private var selectedEntryForViewing: DiaryEntry? = nil
     @State private var showMonthSheet: Bool = false
     @State private var quickMemoText: String = ""
+    // Cache: startOfDay -> latest entry for that day
+    @State private var latestEntryByDay: [Date: DiaryEntry] = [:]
 
     private let shortTimeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -26,26 +28,54 @@ struct ContentView: View {
         return f
     }()
 
-    private func updateDatesWithEntries() {
-        datesWithEntries = Set(
-            entries.compactMap { $0.date }.map {
-                Calendar.current.startOfDay(for: $0)
-            }
-        )
+    private func rebuildDateIndex() {
+        let calendar = Calendar.current
+        // Group entries by startOfDay
+        var grouped: [Date: [DiaryEntry]] = [:]
+        for entry in entries {
+            guard let d = entry.date else { continue }
+            let day = calendar.startOfDay(for: d)
+            grouped[day, default: []].append(entry)
+        }
+        // Pick latest per day
+        var latest: [Date: DiaryEntry] = [:]
+        for (day, list) in grouped {
+            let picked = list.max(by: { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
+            if let p = picked { latest[day] = p }
+        }
+        latestEntryByDay = latest
+        datesWithEntries = Set(latest.keys)
         print("📅 datesWithEntries updated:", datesWithEntries.map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .none) })
     }
 
-    private func weekCalendarHeight(_ totalHeight: CGFloat) -> CGFloat {
+    private func latestEntry(on date: Date) -> DiaryEntry? {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: date)
+        // Prefer cached value when available
+        if let cached = latestEntryByDay[day] { return cached }
+        // Fallback: compute directly from fetched results so first-render shows data
+        let list = entries.filter { entry in
+            guard let d = entry.date else { return false }
+            return calendar.isDate(d, inSameDayAs: day)
+        }
+        return list.max(by: { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
+    }
+
+    private func weekCalendarHeight(_ usableHeight: CGFloat) -> CGFloat {
         let basePadding: CGFloat = 12
-        return max(140, totalHeight * 0.22) + basePadding
+        let proposed = max(140, usableHeight * 0.22) + basePadding
+        // Prevent calendar from growing too tall on large screens
+        return min(proposed, 220)
     }
 
     var body: some View {
         NavigationView {
             GeometryReader { proxy in
-                let totalHeight = proxy.size.height
-                let calendarHeight = self.weekCalendarHeight(totalHeight)
-                let imageMaxHeight = max(200, (totalHeight - calendarHeight) * 0.72)
+                let safeTop = proxy.safeAreaInsets.top
+                let safeBottom = proxy.safeAreaInsets.bottom
+                let usableHeight = proxy.size.height - safeTop - safeBottom
+                let calendarHeight = self.weekCalendarHeight(usableHeight)
+                let imageMaxHeight = max(200, (usableHeight - calendarHeight - 12) * 0.72)
                 ZStack {
                     VStack(spacing: 0) {
                         // Week calendar (default)
@@ -58,12 +88,7 @@ struct ContentView: View {
                         .animation(.spring(response: 0.35, dampingFraction: 0.9), value: selectedDate)
 
                         // Selected day preview (image + memo)
-                        let filteredEntries = entries.filter {
-                            guard let entryDate = $0.date else { return false }
-                            return Calendar.current.isDate(entryDate, inSameDayAs: selectedDate)
-                        }
-
-                        if let firstEntry = filteredEntries.sorted(by: { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }).first {
+                        if let firstEntry = latestEntry(on: selectedDate) {
                             VStack(spacing: 6) {
                         if let data = firstEntry.imageData, let uiImg = UIImage(data: data) {
                             FramedPhotoView(image: uiImg, maxHeight: imageMaxHeight)
@@ -74,9 +99,11 @@ struct ContentView: View {
                         let memoText = (firstEntry.memo ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                         if !memoText.isEmpty {
                             Text(memoText)
-                                .font(.body)
+                                .font(.system(size: 16))
+                                .lineSpacing(3)
                                 .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(12)
+                                .padding(.vertical, 10)
+                                .padding(.horizontal, 10)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12)
                                         .fill(Color(.systemGray6))
@@ -90,8 +117,16 @@ struct ContentView: View {
                         }
                         HStack {
                             Spacer()
-                            Button { selectedEntryForViewing = firstEntry } label: { Label("자세히", systemImage: "chevron.right.circle.fill") }
-                                .buttonStyle(.bordered)
+                            Button { selectedEntryForViewing = firstEntry } label: {
+                                HStack(spacing: 6) {
+                                    Text("자세히")
+                                    Image(systemName: "chevron.right")
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Capsule().stroke(Color.blue.opacity(0.35), lineWidth: 1))
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.horizontal, 10)
                         .padding(.bottom, 8)
@@ -132,13 +167,11 @@ struct ContentView: View {
                                     selectedDate: $selectedDate,
                                     datesWithEntries: datesWithEntries,
                                     thumbnailProvider: { day in
-                                        if let entry = entries.first(where: { e in
-                                            guard let d = e.date else { return false }
-                                            return Calendar.current.isDate(d, inSameDayAs: day) && e.imageData != nil
-                                        }), let data = entry.imageData, let ui = UIImage(data: data) {
-                                            return ui
-                                        }
-                                        return nil
+                                         let dayKey = Calendar.current.startOfDay(for: day)
+                                         if let entry = latestEntryByDay[dayKey], let data = entry.imageData, let ui = UIImage(data: data) {
+                                             return ui
+                                         }
+                                         return nil
                                     }
                                 )
                             }
@@ -166,32 +199,25 @@ struct ContentView: View {
                 }
             }
             .onAppear {
-                updateDatesWithEntries()
-                selectedDate = Calendar.current.startOfDay(for: selectedDate)
-                let firstEntry = entries.filter { entry in
-                    guard let d = entry.date else { return false }
-                    return Calendar.current.isDate(d, inSameDayAs: selectedDate)
-                }.sorted(by: { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }).first
-                quickMemoText = firstEntry?.memo ?? ""
+                // Normalize selected date to today start-of-day on first launch
+                selectedDate = Calendar.current.startOfDay(for: Date())
+                rebuildDateIndex()
+                quickMemoText = latestEntry(on: selectedDate)?.memo ?? ""
             }
             .onReceive(entries.publisher.collect()) { _ in
-                updateDatesWithEntries()
+                rebuildDateIndex()
                 print("📥 Entries updated - count:", entries.count)
                 selectedDate = Calendar.current.startOfDay(for: selectedDate)
-                let firstEntry = entries.filter { entry in
-                    guard let d = entry.date else { return false }
-                    return Calendar.current.isDate(d, inSameDayAs: selectedDate)
-                }.sorted(by: { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }).first
-                quickMemoText = firstEntry?.memo ?? ""
+                quickMemoText = latestEntry(on: selectedDate)?.memo ?? ""
+            }
+            // Ensure initial fetch also reflects immediately
+            .onChange(of: entries.count) { _, _ in
+                rebuildDateIndex()
+                quickMemoText = latestEntry(on: selectedDate)?.memo ?? ""
             }
             .onChange(of: selectedDate) {
-                updateDatesWithEntries()
                 print("📌 Selected date changed to:", selectedDate)
-                let firstEntry = entries.filter { entry in
-                    guard let d = entry.date else { return false }
-                    return Calendar.current.isDate(d, inSameDayAs: selectedDate)
-                }.sorted(by: { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }).first
-                quickMemoText = firstEntry?.memo ?? ""
+                quickMemoText = latestEntry(on: selectedDate)?.memo ?? ""
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -452,20 +478,19 @@ struct WeekCalendarView: View {
                 } label: { Image(systemName: "chevron.left") }
                 Spacer()
                 Text(weekTitle)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button {
                     if let next = calendar.date(byAdding: .day, value: 7, to: selectedDate) { selectedDate = next }
                 } label: { Image(systemName: "chevron.right") }
-                Button("오늘") {
-                    selectedDate = calendar.startOfDay(for: Date())
+                Button(action: { selectedDate = calendar.startOfDay(for: Date()) }) {
+                    Image(systemName: "scope")
+                        .imageScale(.medium)
                 }
-                .font(.caption)
-                .buttonStyle(.bordered)
             }
             .padding(.horizontal)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 ForEach(weekDays, id: \.self) { day in
                     let isSelected = calendar.isDate(day, inSameDayAs: selectedDate)
                     let isToday = calendar.isDateInToday(day)
@@ -473,30 +498,32 @@ struct WeekCalendarView: View {
 
                     VStack(spacing: 6) {
                         Text(weekdayString(for: day))
-                            .font(.caption2)
+                            .font(.system(size: 10))
                             .foregroundColor(.secondary)
 
                         ZStack {
                             if isSelected {
                                 RoundedRectangle(cornerRadius: 10)
                                     .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    .frame(width: 44, height: 44)
+                                    .frame(width: 40, height: 40)
                             } else if isToday {
                                 RoundedRectangle(cornerRadius: 10)
                                     .stroke(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2)
-                                    .frame(width: 44, height: 44)
+                                    .frame(width: 40, height: 40)
                             } else {
                                 RoundedRectangle(cornerRadius: 10)
                                     .fill(Color(.systemGray6))
-                                    .frame(width: 44, height: 44)
+                                    .frame(width: 40, height: 40)
                             }
 
                             Text("\(calendar.component(.day, from: day))")
-                                .font(.body.weight(isSelected ? .bold : .regular))
+                                .font(.system(size: 14, weight: isSelected ? .bold : .regular))
                                 .foregroundColor(isSelected ? .white : .primary)
                         }
-
-                        if hasEntry { Circle().fill(Color.blue).frame(width: 5, height: 5) }
+                        .scaleEffect(isSelected ? 1.04 : 1.0)
+                        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: isSelected)
+                        
+                        if hasEntry { Circle().fill(Color.blue).frame(width: 5, height: 5).offset(y: -1) }
                         else { Spacer().frame(height: 5) }
                     }
                     .onTapGesture { selectedDate = day }
@@ -581,26 +608,12 @@ struct FramedPhotoView: View {
             bottomTrailingRadius: 18,
             topTrailingRadius: 0
         )
-        ZStack {
-            // Matte (액자 안쪽 배경)
-            shape
-                .fill(Color(.systemBackground))
-                .overlay(
-                    // 바깥 프레임 테두리
-                    shape.stroke(Color.black.opacity(0.08), lineWidth: 2)
-                )
-                .overlay(
-                    // 안쪽 하이라이트(얇은 광택)로 깊이감
-                    shape.inset(by: 2).stroke(Color.white.opacity(0.55), lineWidth: 0.5)
-                )
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFit()
-                .padding(.horizontal, 8) // no top/bottom matte
-        }
-        .frame(maxHeight: maxHeight)
-        .clipShape(shape)
-        .shadow(color: Color.black.opacity(0.10), radius: 10, x: 0, y: 6)
+        Image(uiImage: image)
+            .resizable()
+            .scaledToFit() // avoid over-zoom/cropping
+            .frame(maxWidth: .infinity, maxHeight: maxHeight)
+            .clipShape(shape)
+            .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
     }
 }
 

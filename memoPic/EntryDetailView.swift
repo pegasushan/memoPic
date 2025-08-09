@@ -78,6 +78,9 @@ struct EntryDetailView: View {
                                 entry.imageData = image.jpegData(compressionQuality: 0.8)
                             }
                             try? viewContext.save()
+                            // sync viewer state immediately
+                            memoText = tempMemoText
+                            selectedImage = tempSelectedImage
                             let generator = UINotificationFeedbackGenerator()
                             generator.notificationOccurred(.success)
                             showSavedMessage = true
@@ -96,71 +99,77 @@ struct EntryDetailView: View {
                 .padding()
                 Spacer()
             } else {
-                // 뷰어 모드
-                let totalHeight = UIScreen.main.bounds.height
-                let buttonAreaHeight: CGFloat = 100
-                let contentHeight = totalHeight - buttonAreaHeight
-                let imageHeight = contentHeight * 0.75
-                let textHeight = contentHeight * 0.25
-                if let imageData = entry.imageData, let uiImage = UIImage(data: imageData) {
-                    Image(uiImage: selectedImage ?? uiImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: UIScreen.main.bounds.width, height: imageHeight)
-                        .clipped()
-                        .overlay(
-                            LinearGradient(colors: [Color.black.opacity(0.35), .clear], startPoint: .top, endPoint: .center)
-                        )
-                        .overlay(
-                            LinearGradient(colors: [.clear, Color.black.opacity(0.35)], startPoint: .center, endPoint: .bottom)
-                        )
-                        .contentShape(Rectangle())
-                        .onTapGesture { showFullScreenImage = true }
-                } else {
-                    Color.gray
-                        .frame(width: UIScreen.main.bounds.width, height: imageHeight)
-                        .overlay(Text("No Image").foregroundColor(.white))
-                }
+                // 뷰어 모드 - 화면 크기에 유연하게 대응
+                GeometryReader { proxy in
+                    let safeTop = proxy.safeAreaInsets.top
+                    let safeBottom = proxy.safeAreaInsets.bottom
+                    let totalHeight = proxy.size.height - safeTop - safeBottom
+                    let buttonAreaHeight: CGFloat = 96
+                    let contentHeight = max(0, totalHeight - buttonAreaHeight)
+                    let imageHeight = contentHeight * 0.75
+                    let textHeight = contentHeight * 0.25
 
-                ScrollView {
-                    Text(memoText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(height: textHeight)
-                .padding(.horizontal)
-
-                Spacer(minLength: 0)
-
-                ZStack(alignment: .bottom) {
-                    Color.clear
-                    HStack(spacing: 12) {
-                        Button(action: {
-                            // 수정 모드 진입: 임시 데이터에 현재 값 복사
-                            tempMemoText = entry.memo ?? ""
-                            tempSelectedImage = selectedImage ?? (entry.imageData.flatMap { UIImage(data: $0) })
-                            isEditing = true
-                        }) {
-                            HStack { Image(systemName: "pencil"); Text("수정") }
-                                .frame(maxWidth: .infinity)
+                    VStack(spacing: 0) {
+                        if let imageData = entry.imageData, let uiImage = UIImage(data: imageData) {
+                            Image(uiImage: selectedImage ?? uiImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: proxy.size.width, height: imageHeight)
+                                .overlay(
+                                    LinearGradient(colors: [Color.black.opacity(0.35), .clear], startPoint: .top, endPoint: .center)
+                                )
+                                .overlay(
+                                    LinearGradient(colors: [.clear, Color.black.opacity(0.35)], startPoint: .center, endPoint: .bottom)
+                                )
+                                .contentShape(Rectangle())
+                                .onTapGesture { showFullScreenImage = true }
+                        } else {
+                            Color.gray
+                                .frame(width: proxy.size.width, height: imageHeight)
+                                .overlay(Text("No Image").foregroundColor(.white))
                         }
-                        .buttonStyle(PrimaryCapsuleButtonStyle())
 
-                        Button(action: { showDeleteAlert = true }) {
-                            HStack { Image(systemName: "trash"); Text("삭제") }
-                                .frame(maxWidth: .infinity)
+                        ScrollView {
+                            Text(memoText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .tint(.red)
-                        .buttonStyle(.borderedProminent)
+                        .frame(height: textHeight)
+                        .padding(.horizontal)
+
+                        Spacer(minLength: 0)
+
+                        ZStack(alignment: .bottom) {
+                            Color.clear
+                            HStack(spacing: 12) {
+                                Button(action: {
+                                    // 수정 모드 진입: 임시 데이터에 현재 값 복사
+                                    tempMemoText = entry.memo ?? ""
+                                    tempSelectedImage = selectedImage ?? (entry.imageData.flatMap { UIImage(data: $0) })
+                                    isEditing = true
+                                }) {
+                                    HStack { Image(systemName: "pencil"); Text("수정") }
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(PrimaryCapsuleButtonStyle())
+
+                                Button(action: { showDeleteAlert = true }) {
+                                    HStack { Image(systemName: "trash"); Text("삭제") }
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .tint(.red)
+                                .buttonStyle(.borderedProminent)
+                            }
+                            .padding(.vertical, 12)
+                            .padding(.horizontal)
+                            .glass(cornerRadius: 18)
+                            .padding(.horizontal)
+                            .padding(.bottom, 8)
+                        }
+                        .frame(height: buttonAreaHeight)
                     }
-                    .padding(.vertical, 12)
-                    .padding(.horizontal)
-                    .glass(cornerRadius: 18)
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
                 }
-                .frame(height: buttonAreaHeight)
             }
         }
         .navigationTitle(dateFormatter.string(from: entry.date ?? Date()))
