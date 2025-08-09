@@ -10,68 +10,215 @@ struct EntryDetailView: View {
     @State private var isEditing = false
     @State private var showImagePicker = false
     @State private var selectedImage: UIImage?
+    @State private var showSavedMessage = false
+    @State private var showDeleteAlert = false
+    @State private var tempMemoText: String = ""
+    @State private var tempSelectedImage: UIImage? = nil
+    @State private var showFullScreenImage = false
 
     var body: some View {
         VStack(spacing: 0) {
-            if let imageData = entry.imageData,
-               let uiImage = UIImage(data: imageData) {
-                Image(uiImage: selectedImage ?? uiImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxHeight: UIScreen.main.bounds.height * 2/3)
-                    .clipped()
-                    .onTapGesture {
-                        if isEditing {
-                            showImagePicker = true
-                        }
-                    }
-            } else {
-                Color.gray
-                    .frame(maxHeight: UIScreen.main.bounds.height * 2/3)
-                    .overlay(Text("No Image").foregroundColor(.white))
-            }
-
-            TextEditor(text: $memoText)
-                .disabled(!isEditing)
-                .frame(maxHeight: UIScreen.main.bounds.height * 1/3)
-                .padding()
-
             if isEditing {
-                Button("저장") {
-                    entry.memo = memoText
-                    if let image = selectedImage {
-                        entry.imageData = image.jpegData(compressionQuality: 0.8)
-                    }
-                    try? viewContext.save()
-                    isEditing = false
-                }
-                .padding()
-            } else {
-                Button("수정") {
-                    isEditing = true
-                }
-                .padding()
-            }
+                // 수정 모드
+                VStack(spacing: 16) {
+                    Text("✏️ 수정 중")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                        .padding(.top)
 
-            Button(role: .destructive) {
-                deleteEntry()
-            } label: {
-                Label("삭제", systemImage: "trash")
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.red.opacity(0.1))
-                    .cornerRadius(10)
+                    if let imageData = entry.imageData, let baseImage = UIImage(data: imageData) {
+                        Image(uiImage: tempSelectedImage ?? baseImage)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 220)
+                            .cornerRadius(12)
+                            .shadow(radius: 4)
+                    } else {
+                        Color.gray
+                            .frame(height: 220)
+                            .cornerRadius(12)
+                            .overlay(Text("No Image").foregroundColor(.white))
+                    }
+
+                    HStack(spacing: 12) {
+                        Button(action: { showImagePicker = true }) {
+                            HStack { Image(systemName: "photo"); Text("사진 변경") }
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.blue)
+
+                        Button(action: { showImagePicker = true }) {
+                            HStack { Image(systemName: "crop"); Text("사진 편집") }
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    TextEditor(text: $tempMemoText)
+                        .frame(height: 120)
+                        .padding(12)
+                        .glass(cornerRadius: 12)
+
+                    HStack(spacing: 15) {
+                        Button(action: {
+                            // 취소: 임시 데이터 초기화, 수정 모드 해제
+                            isEditing = false
+                        }) {
+                            HStack {
+                                Image(systemName: "xmark")
+                                Text("취소")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .buttonStyle(.bordered)
+                        }
+
+                        Button(action: {
+                            entry.memo = tempMemoText
+                            if let image = tempSelectedImage {
+                                entry.imageData = image.jpegData(compressionQuality: 0.8)
+                            }
+                            try? viewContext.save()
+                            let generator = UINotificationFeedbackGenerator()
+                            generator.notificationOccurred(.success)
+                            showSavedMessage = true
+                            isEditing = false
+                        }) {
+                            HStack {
+                                Image(systemName: "checkmark")
+                                Text("저장")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(PrimaryCapsuleButtonStyle())
+                    }
+                    .padding(.top)
+                }
+                .padding()
+                Spacer()
+            } else {
+                // 뷰어 모드
+                let totalHeight = UIScreen.main.bounds.height
+                let buttonAreaHeight: CGFloat = 100
+                let contentHeight = totalHeight - buttonAreaHeight
+                let imageHeight = contentHeight * 0.75
+                let textHeight = contentHeight * 0.25
+                if let imageData = entry.imageData, let uiImage = UIImage(data: imageData) {
+                    Image(uiImage: selectedImage ?? uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: UIScreen.main.bounds.width, height: imageHeight)
+                        .clipped()
+                        .overlay(
+                            LinearGradient(colors: [Color.black.opacity(0.35), .clear], startPoint: .top, endPoint: .center)
+                        )
+                        .overlay(
+                            LinearGradient(colors: [.clear, Color.black.opacity(0.35)], startPoint: .center, endPoint: .bottom)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture { showFullScreenImage = true }
+                } else {
+                    Color.gray
+                        .frame(width: UIScreen.main.bounds.width, height: imageHeight)
+                        .overlay(Text("No Image").foregroundColor(.white))
+                }
+
+                ScrollView {
+                    Text(memoText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(height: textHeight)
+                .padding(.horizontal)
+
+                Spacer(minLength: 0)
+
+                ZStack(alignment: .bottom) {
+                    Color.clear
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            // 수정 모드 진입: 임시 데이터에 현재 값 복사
+                            tempMemoText = entry.memo ?? ""
+                            tempSelectedImage = selectedImage ?? (entry.imageData.flatMap { UIImage(data: $0) })
+                            isEditing = true
+                        }) {
+                            HStack { Image(systemName: "pencil"); Text("수정") }
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(PrimaryCapsuleButtonStyle())
+
+                        Button(action: { showDeleteAlert = true }) {
+                            HStack { Image(systemName: "trash"); Text("삭제") }
+                                .frame(maxWidth: .infinity)
+                        }
+                        .tint(.red)
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding(.vertical, 12)
+                    .padding(.horizontal)
+                    .glass(cornerRadius: 18)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
+                .frame(height: buttonAreaHeight)
             }
-            .padding(.horizontal)
         }
         .navigationTitle(dateFormatter.string(from: entry.date ?? Date()))
         .onAppear {
             memoText = entry.memo ?? ""
         }
         .sheet(isPresented: $showImagePicker) {
+            // 수정 모드에서만 동작
             ImagePicker(isPresented: $showImagePicker, imageHandler: { image in
-                selectedImage = image
+                tempSelectedImage = image
             })
+        }
+        .alert("삭제하시겠습니까?", isPresented: $showDeleteAlert) {
+            Button("취소", role: .cancel) { }
+            Button("삭제", role: .destructive) {
+                deleteEntry()
+            }
+        } message: {
+            Text("이 기록을 삭제하면 복구할 수 없습니다.")
+        }
+        .overlay(alignment: .top) {
+            if showSavedMessage {
+                ToastView(text: "저장되었습니다")
+                    .padding(.top, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .onChange(of: showSavedMessage) { _, isShown in
+            guard isShown else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                withAnimation { showSavedMessage = false }
+            }
+        }
+        .fullScreenCover(isPresented: $showFullScreenImage) {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let imageData = entry.imageData, let uiImage = UIImage(data: imageData) {
+                    Image(uiImage: selectedImage ?? uiImage)
+                        .resizable()
+                        .scaledToFit()
+                        .background(Color.black)
+                        .onTapGesture {
+                            showFullScreenImage = false
+                        }
+                }
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button(action: { showFullScreenImage = false }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.white)
+                                .padding(20)
+                        }
+                    }
+                    Spacer()
+                }
+            }
         }
     }
 
