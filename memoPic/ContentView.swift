@@ -61,6 +61,17 @@ struct ContentView: View {
         return list.max(by: { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) })
     }
 
+    private func dailyEntries(for date: Date) -> [DiaryEntry] {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: date)
+        return entries
+            .filter { entry in
+                guard let d = entry.date else { return false }
+                return calendar.isDate(d, inSameDayAs: day)
+            }
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
+
     private func weekCalendarHeight(_ usableHeight: CGFloat) -> CGFloat {
         let basePadding: CGFloat = 12
         let proposed = max(140, usableHeight * 0.22) + basePadding
@@ -87,51 +98,9 @@ struct ContentView: View {
                         .padding(.top, 0)
                         .animation(.spring(response: 0.35, dampingFraction: 0.9), value: selectedDate)
 
-                        // Selected day preview (image + memo)
-                        if let firstEntry = latestEntry(on: selectedDate) {
-                            VStack(spacing: 6) {
-                        if let data = firstEntry.imageData, let uiImg = UIImage(data: data) {
-                            FramedPhotoView(image: uiImg, maxHeight: imageMaxHeight)
-                                .padding(.horizontal, 10)
-                                .padding(.top, 0)
-                                .onTapGesture { selectedEntryForViewing = firstEntry }
-                        }
-                        let memoText = (firstEntry.memo ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !memoText.isEmpty {
-                            Text(memoText)
-                                .font(.system(size: 16))
-                                .lineSpacing(3)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 10)
-                                .padding(.horizontal, 10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(Color(.systemGray6))
-                                )
-                                .padding(.horizontal, 10)
-                        } else {
-                            Text("메모가 없습니다")
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 10)
-                        }
-                        HStack {
-                            Spacer()
-                            Button { selectedEntryForViewing = firstEntry } label: {
-                                HStack(spacing: 6) {
-                                    Text("자세히")
-                                    Image(systemName: "chevron.right")
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Capsule().stroke(Color.blue.opacity(0.35), lineWidth: 1))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 8)
-                    }
-                        } else {
+                        // Selected day: show all entries as vertical cards
+                        let dayEntries = dailyEntries(for: selectedDate)
+                        if dayEntries.isEmpty {
                             VStack(spacing: 12) {
                                 Spacer()
                                 Text("해당 날짜의 기록이 없습니다.")
@@ -139,6 +108,45 @@ struct ContentView: View {
                                 Button { showingAddEntry = true } label: { Label("첫 기록 추가", systemImage: "plus") }
                                     .buttonStyle(.bordered)
                                 Spacer()
+                            }
+                        } else {
+                            ScrollView {
+                                LazyVStack(spacing: 16, pinnedViews: []) {
+                                    ForEach(dayEntries, id: \.objectID) { entry in
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            // Time label
+                                            if let d = entry.date {
+                                                Text(shortTimeFormatter.string(from: d))
+                                                    .font(.system(size: 12, weight: .semibold))
+                                                    .foregroundColor(.secondary)
+                                                    .padding(.horizontal, 10)
+                                            }
+                                            // Image (optional)
+                                            if let data = entry.imageData, let uiImg = UIImage(data: data) {
+                                                FramedPhotoView(image: uiImg, maxHeight: imageMaxHeight)
+                                                    .padding(.horizontal, 10)
+                                                    .onTapGesture { selectedEntryForViewing = entry }
+                                            }
+                                            // Memo (optional)
+                                            let memoText = (entry.memo ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                                            if !memoText.isEmpty {
+                                                Text(memoText)
+                                                    .font(.system(size: 16))
+                                                    .lineSpacing(3)
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                    .padding(.vertical, 10)
+                                                    .padding(.horizontal, 10)
+                                                    .background(
+                                                        RoundedRectangle(cornerRadius: 12)
+                                                            .fill(Color(.systemGray6))
+                                                    )
+                                                    .padding(.horizontal, 10)
+                                            }
+                                        }
+                                        .contentShape(Rectangle())
+                                        .onTapGesture { selectedEntryForViewing = entry }
+                                    }
+                                }
                             }
                         }
                     }
