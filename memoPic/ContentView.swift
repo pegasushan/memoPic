@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @Environment(\.managedObjectContext) var viewContext
@@ -86,7 +87,6 @@ struct ContentView: View {
                 let safeBottom = proxy.safeAreaInsets.bottom
                 let usableHeight = proxy.size.height - safeTop - safeBottom
                 let calendarHeight = self.weekCalendarHeight(usableHeight)
-                let imageMaxHeight = max(200, (usableHeight - calendarHeight - 12) * 0.72)
                 ZStack {
                     VStack(spacing: 0) {
                         // Week calendar (default)
@@ -110,44 +110,18 @@ struct ContentView: View {
                                 Spacer()
                             }
                         } else {
-                            ScrollView {
-                                LazyVStack(spacing: 16, pinnedViews: []) {
-                                    ForEach(dayEntries, id: \.objectID) { entry in
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            // Time label
-                                            if let d = entry.date {
-                                                Text(shortTimeFormatter.string(from: d))
-                                                    .font(.system(size: 12, weight: .semibold))
-                                                    .foregroundColor(.secondary)
-                                                    .padding(.horizontal, 10)
-                                            }
-                                            // Image (optional)
-                                            if let data = entry.imageData, let uiImg = UIImage(data: data) {
-                                                FramedPhotoView(image: uiImg, maxHeight: imageMaxHeight)
-                                                    .padding(.horizontal, 10)
-                                                    .onTapGesture { selectedEntryForViewing = entry }
-                                            }
-                                            // Memo (optional)
-                                            let memoText = (entry.memo ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                                            if !memoText.isEmpty {
-                                                Text(memoText)
-                                                    .font(.system(size: 16))
-                                                    .lineSpacing(3)
-                                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                                    .padding(.vertical, 10)
-                                                    .padding(.horizontal, 10)
-                                                    .background(
-                                                        RoundedRectangle(cornerRadius: 12)
-                                                            .fill(Color(.systemGray6))
-                                                    )
-                                                    .padding(.horizontal, 10)
-                                            }
-                                        }
+                            List {
+                                ForEach(dayEntries, id: \.objectID) { entry in
+                                    let timeText: String = {
+                                        if let d = entry.date { return shortTimeFormatter.string(from: d) }
+                                        return "--:--"
+                                    }()
+                                    DailyEntryRow(entry: entry, timeText: timeText)
                                         .contentShape(Rectangle())
                                         .onTapGesture { selectedEntryForViewing = entry }
-                                    }
                                 }
                             }
+                            .listStyle(.plain)
                         }
                     }
                 }
@@ -459,7 +433,7 @@ struct CustomCalendarView: View {
 
     private func monthYearString(from date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy년 M월"
+        formatter.dateFormat = "yyyy.MM"
         return formatter.string(from: date)
     }
 }
@@ -472,6 +446,7 @@ struct WeekCalendarView: View {
     let datesWithEntries: Set<Date>
 
     private let calendar = Calendar.current
+    @State private var isScrubbing: Bool = false
 
     private var weekDays: [Date] {
         let startOfWeek = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: selectedDate)) ?? selectedDate
@@ -480,64 +455,125 @@ struct WeekCalendarView: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            HStack(spacing: 8) {
-                Button {
-                    if let prev = calendar.date(byAdding: .day, value: -7, to: selectedDate) { selectedDate = prev }
-                } label: { Image(systemName: "chevron.left") }
-                Spacer()
+            ZStack {
                 Text(weekTitle)
                     .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Button {
-                    if let next = calendar.date(byAdding: .day, value: 7, to: selectedDate) { selectedDate = next }
-                } label: { Image(systemName: "chevron.right") }
-                Button(action: { selectedDate = calendar.startOfDay(for: Date()) }) {
-                    Image(systemName: "scope")
-                        .imageScale(.medium)
-                }
-            }
-            .padding(.horizontal)
-
-            HStack(spacing: 8) {
-                ForEach(weekDays, id: \.self) { day in
-                    let isSelected = calendar.isDate(day, inSameDayAs: selectedDate)
-                    let isToday = calendar.isDateInToday(day)
-                    let hasEntry = datesWithEntries.contains { calendar.isDate($0, inSameDayAs: day) }
-
-                    VStack(spacing: 6) {
-                        Text(weekdayString(for: day))
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-
-                        ZStack {
-                            if isSelected {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                                    .frame(width: 40, height: 40)
-                            } else if isToday {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2)
-                                    .frame(width: 40, height: 40)
-                            } else {
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(Color(.systemGray6))
-                                    .frame(width: 40, height: 40)
-                            }
-
-                            Text("\(calendar.component(.day, from: day))")
-                                .font(.system(size: 14, weight: isSelected ? .bold : .regular))
-                                .foregroundColor(isSelected ? .white : .primary)
-                        }
-                        .scaleEffect(isSelected ? 1.04 : 1.0)
-                        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: isSelected)
-                        
-                        if hasEntry { Circle().fill(Color.blue).frame(width: 5, height: 5).offset(y: -1) }
-                        else { Spacer().frame(height: 5) }
+                HStack {
+                    Spacer()
+                    Button(action: { selectedDate = calendar.startOfDay(for: Date()) }) {
+                        Image(systemName: "scope")
+                            .imageScale(.medium)
                     }
-                    .onTapGesture { selectedDate = day }
                 }
             }
             .padding(.horizontal)
+
+            GeometryReader { geo in
+                let width = geo.size.width
+                HStack(spacing: 8) {
+                    ForEach(weekDays, id: \.self) { day in
+                        let isSelected = calendar.isDate(day, inSameDayAs: selectedDate)
+                        let isToday = calendar.isDateInToday(day)
+                        let hasEntry = datesWithEntries.contains { calendar.isDate($0, inSameDayAs: day) }
+
+                        VStack(spacing: 6) {
+                            Text(weekdayString(for: day))
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+
+                            ZStack {
+                                if isSelected {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
+                                        .frame(width: 40, height: 40)
+                                } else if isToday {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 2)
+                                        .frame(width: 40, height: 40)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .fill(Color(.systemGray6))
+                                        .frame(width: 40, height: 40)
+                                }
+
+                                Text("\(calendar.component(.day, from: day))")
+                                    .font(.system(size: 14, weight: isSelected ? .bold : .regular))
+                                    .foregroundColor(isSelected ? .white : .primary)
+                            }
+                            .scaleEffect(isSelected ? 1.04 : 1.0)
+                            .animation(.spring(response: 0.25, dampingFraction: 0.85), value: isSelected)
+                            
+                            if hasEntry { Circle().fill(Color.blue).frame(width: 5, height: 5).offset(y: -1) }
+                            else { Spacer().frame(height: 5) }
+                        }
+                        .onTapGesture { selectedDate = day }
+                    }
+                }
+                .frame(maxWidth: .infinity) // ensure full-width hit area
+                .contentShape(Rectangle())
+                // Long-press then drag: scrub within the week; allow simultaneous recognition with week-swipe
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.25)
+                        .sequenced(before: DragGesture(minimumDistance: 0))
+                        .onChanged { value in
+                            switch value {
+                            case .first(true):
+                                isScrubbing = true
+                            case .second(true, let drag?):
+                                isScrubbing = true
+                                let x = max(0, min(drag.location.x, width - 1))
+                                let proportion = x / max(width, 1)
+                                var idx = Int(floor(proportion * 7))
+                                idx = min(max(idx, 0), 6)
+                                let target = weekDays[idx]
+                                if !calendar.isDate(target, inSameDayAs: selectedDate) {
+                                    selectedDate = target
+                                }
+                            default:
+                                break
+                            }
+                        }
+                        .onEnded { _ in
+                            isScrubbing = false
+                        }
+                )
+                // Week swipe (left/right) - disabled while scrubbing
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 12)
+                        .onEnded { value in
+                            // Allow week swipe even while scrubbing; end scrubbing when swipe recognized
+                            let threshold: CGFloat = 48
+                            let start = weekDays.first ?? selectedDate
+                            let end = weekDays.last ?? selectedDate
+                            if value.translation.width <= -threshold {
+                                // swipe left → move forward (next)
+                                isScrubbing = false
+                                let generator = UIImpactFeedbackGenerator(style: .light)
+                                generator.impactOccurred()
+                                if calendar.isDate(selectedDate, inSameDayAs: end) {
+                                    let nextDay = calendar.date(byAdding: .day, value: 1, to: selectedDate)!
+                                    selectedDate = calendar.startOfDay(for: nextDay)
+                                } else {
+                                    let nextWeek = calendar.date(byAdding: .day, value: 7, to: selectedDate)!
+                                    selectedDate = calendar.startOfDay(for: nextWeek)
+                                }
+                            } else if value.translation.width >= threshold {
+                                // swipe right → move backward (previous)
+                                isScrubbing = false
+                                let generator = UIImpactFeedbackGenerator(style: .light)
+                                generator.impactOccurred()
+                                if calendar.isDate(selectedDate, inSameDayAs: start) {
+                                    let prevDay = calendar.date(byAdding: .day, value: -1, to: selectedDate)!
+                                    selectedDate = calendar.startOfDay(for: prevDay)
+                                } else {
+                                    let prevWeek = calendar.date(byAdding: .day, value: -7, to: selectedDate)!
+                                    selectedDate = calendar.startOfDay(for: prevWeek)
+                                }
+                            }
+                        }
+                )
+                .padding(.horizontal)
+            }
         }
             .padding(.vertical, 0)
         .background(
@@ -554,7 +590,7 @@ struct WeekCalendarView: View {
 
     private var weekTitle: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy년 M월 d일"
+        formatter.dateFormat = "yyyy.MM.dd"
         let start = weekDays.first ?? selectedDate
         let end = weekDays.last ?? selectedDate
         return "\(formatter.string(from: start)) - \(formatter.string(from: end))"
@@ -595,7 +631,7 @@ struct DayHeaderView: View {
 
     private var dayTitle: String {
         let f = DateFormatter()
-        f.dateFormat = "yyyy년 M월 d일"
+        f.dateFormat = "yyyy.MM.dd"
         return f.string(from: selectedDate)
     }
     private var weekday: String {
@@ -622,6 +658,43 @@ struct FramedPhotoView: View {
             .frame(maxWidth: .infinity, maxHeight: maxHeight)
             .clipShape(shape)
             .shadow(color: Color.black.opacity(0.08), radius: 8, x: 0, y: 4)
+    }
+}
+
+// MARK: - Daily Entry Row (time-leading, single-line content)
+struct DailyEntryRow: View {
+    let entry: DiaryEntry
+    let timeText: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Text(timeText)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+                .frame(width: 52, alignment: .leading)
+
+            if let data = entry.imageData, let ui = UIImage(data: data) {
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 44, height: 44)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 0.5)
+                    )
+            }
+
+            let memo = (entry.memo ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            Text(memo.isEmpty ? "(메모 없음)" : memo)
+                .font(.system(size: 15))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundColor(.primary)
+
+            Spacer()
+        }
+        .padding(.vertical, 6)
     }
 }
 

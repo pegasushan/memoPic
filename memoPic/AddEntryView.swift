@@ -11,6 +11,7 @@ struct AddEntryView: View {
     @State private var showPhotoSourceDialog = false
     @State private var sourceType: UIImagePickerController.SourceType = .photoLibrary
     @State private var memoText: String = ""
+    @State private var selectedTime: Date = Date()
     @State private var alertMessage = ""
     @State private var showSaveSuccessAlert = false
     @FetchRequest(
@@ -31,6 +32,15 @@ struct AddEntryView: View {
                             .font(.subheadline)
                             .foregroundColor(.gray)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(spacing: 8) {
+                            Text("시간")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            DatePicker("시간", selection: $selectedTime, displayedComponents: .hourAndMinute)
+                                .labelsHidden()
+                                .datePickerStyle(.compact)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.horizontal)
 
@@ -118,6 +128,9 @@ struct AddEntryView: View {
                             return
                         }
                         if let entry = editingEntry {
+                            // Use existing day with selected time
+                            let baseDay = Calendar.current.startOfDay(for: entry.date ?? date)
+                            entry.date = combineDay(baseDay, withTime: selectedTime)
                             entry.memo = memoText
                             if let firstImage = selectedImages.first {
                                 entry.imageData = firstImage.jpegData(compressionQuality: 0.8)
@@ -125,7 +138,8 @@ struct AddEntryView: View {
                         } else {
                             let newEntry = DiaryEntry(context: viewContext)
                             newEntry.id = UUID()
-                            newEntry.date = date
+                            let baseDay = Calendar.current.startOfDay(for: date)
+                            newEntry.date = combineDay(baseDay, withTime: selectedTime)
                             newEntry.memo = memoText
                             if let firstImage = selectedImages.first {
                                 newEntry.imageData = firstImage.jpegData(compressionQuality: 0.8)
@@ -170,6 +184,9 @@ struct AddEntryView: View {
                     if let imageData = entry.imageData, let uiImage = UIImage(data: imageData) {
                         selectedImages = [uiImage]
                     }
+                    if let d = entry.date { selectedTime = d }
+                } else {
+                    selectedTime = Date()
                 }
             }
         }
@@ -178,6 +195,18 @@ struct AddEntryView: View {
 
 private let dateFormatter: DateFormatter = {
     let formatter = DateFormatter()
-    formatter.dateStyle = .long
+    formatter.dateFormat = "yyyy.MM.dd"
     return formatter
 }()
+
+// Combine a day (Y-M-D) with a time (h:m:s) from another Date
+private func combineDay(_ day: Date, withTime time: Date) -> Date {
+    let calendar = Calendar.current
+    var comps = calendar.dateComponents([.year, .month, .day], from: day)
+    let timeComps = calendar.dateComponents([.hour, .minute, .second, .nanosecond], from: time)
+    comps.hour = timeComps.hour
+    comps.minute = timeComps.minute
+    comps.second = timeComps.second
+    comps.nanosecond = timeComps.nanosecond
+    return calendar.date(from: comps) ?? day
+}
